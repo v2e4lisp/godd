@@ -18,7 +18,6 @@ var (
         procfile = "Procfile"
         envfile  = ".env"
         procs    = make(map[string]string)
-        cmds     = []*exec.Cmd(nil)
         start    string
 )
 
@@ -50,7 +49,7 @@ func loadEnv() error {
         return nil
 }
 
-func run() {
+func run(cmds []*exec.Cmd) {
         // broadcast to kill all commands' processes
         kill := make(chan bool)
         // all commands finished
@@ -129,6 +128,7 @@ func main() {
                 os.Exit(1)
         }
 
+        cmds := []*exec.Cmd(nil)
         for name, cmd := range procs {
                 c := strings.Split(cmd, " ")
                 if start == "" || start == name {
@@ -136,5 +136,5 @@ func main() {
                 }
         }
 
-        run()
+        run(cmds)
 }
