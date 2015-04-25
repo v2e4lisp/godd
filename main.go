@@ -78,7 +78,8 @@ func run(cmds []*exec.Cmd) {
                                 if cmd.Process == nil {
                                         break
                                 }
-                                if err := cmd.Process.Kill(); err != nil {
+                                err := cmd.Process.Signal(syscall.SIGTERM)
+                                if err != nil {
                                         fmt.Println(err)
                                 }
                         case <-exit:
@@ -147,9 +148,8 @@ func doStart() {
 
         cmds := []*exec.Cmd(nil)
         for name, cmd := range procs {
-                c := strings.Split(cmd, " ")
                 if proc == "" || proc == name {
-                        cmds = append(cmds, exec.Command(c[0], c[1:]...))
+                        cmds = append(cmds, exec.Command("sh", "-c", cmd))
                 }
         }
 
