@@ -74,6 +74,7 @@ func run(cmds []*exec.Cmd) {
                         defer wg.Done()
                         select {
                         case <-kill:
+                                // for commands that failed to Start
                                 if cmd.Process == nil {
                                         break
                                 }
