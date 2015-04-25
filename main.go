@@ -51,22 +51,19 @@ func run(cmds []*exec.Cmd) {
         done := make(chan bool)
         // handle Ctrl-C and other signal
         sigs := make(chan os.Signal, 1)
+        // ensure all commands get `Started'(although some of them may fail)
+        ready := make(chan error, len(cmds))
 
         signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
         var wg sync.WaitGroup
+        wg.Add(len(cmds))
         for _, cmd := range cmds {
                 cmd.Stdout = os.Stdout
                 cmd.Stderr = os.Stderr
 
                 exit := make(chan error)
-                err := cmd.Start()
-                if err != nil {
-                        fmt.Println(err)
-                        done <- true
-                        break
-                }
-                wg.Add(1)
+                ready <- cmd.Start()
 
                 go func(cmd *exec.Cmd, exit chan error) {
                         exit <- cmd.Wait()
@@ -77,6 +74,9 @@ func run(cmds []*exec.Cmd) {
                         defer wg.Done()
                         select {
                         case <-kill:
+                                if cmd.Process == nil {
+                                        break
+                                }
                                 if err := cmd.Process.Kill(); err != nil {
                                         fmt.Println(err)
                                 }
@@ -86,6 +86,8 @@ func run(cmds []*exec.Cmd) {
                 }(cmd, exit)
         }
 
+        // make sure that all commands got executed
+        <-ready
         select {
         case <-done:
                 close(kill)
