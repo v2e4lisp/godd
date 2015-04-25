@@ -12,6 +12,7 @@ import (
         "regexp"
         "strings"
         "sync"
+        "syscall"
 )
 
 var (
@@ -54,52 +55,53 @@ func loadProcs(procfile string) (map[string]string, error) {
 func run(cmds []*exec.Cmd) {
         // broadcast to kill all commands' processes
         kill := make(chan bool)
-        // all commands finished
+        // any command finished
         done := make(chan bool)
         // handle Ctrl-C and other signal
-        sigs := make(chan os.Signal, 5)
+        sigs := make(chan os.Signal, 1)
+
+        signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
         var wg sync.WaitGroup
-        wg.Add(len(cmds))
-        go func() {
-                wg.Wait()
-                done <- true
-        }()
-
-        signal.Notify(sigs, os.Interrupt, os.Kill)
-
         for _, cmd := range cmds {
                 cmd.Stdout = os.Stdout
                 cmd.Stderr = os.Stderr
-                go func(cmd *exec.Cmd) {
+
+                exit := make(chan error)
+                err := cmd.Start()
+                if err != nil {
+                        fmt.Println(err)
+                        done <- true
+                        break
+                }
+                wg.Add(1)
+
+                go func(cmd *exec.Cmd, exit chan error) {
+                        exit <- cmd.Wait()
+                }(cmd, exit)
+
+                // If the command exists, send a message to `done' channel
+                go func(cmd *exec.Cmd, exit chan error) {
                         defer wg.Done()
-                        done := make(chan bool)
-                        err := cmd.Run()
-                        if err != nil {
-                                fmt.Println(err)
-                                return
-                        }
-
-                        go func() {
-                                cmd.Wait()
-                                done <- true
-                        }()
-
                         select {
-                        case <-done:
                         case <-kill:
                                 if err := cmd.Process.Kill(); err != nil {
                                         fmt.Println(err)
                                 }
+                        case <-exit:
+                                done <- true
                         }
-                }(cmd)
+                }(cmd, exit)
         }
 
         select {
         case <-done:
+                close(kill)
         case <-sigs:
                 close(kill)
         }
+
+        wg.Wait()
 }
 
 func abort(msg ...interface{}) {
