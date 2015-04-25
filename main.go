@@ -1,10 +1,10 @@
 package main
 
 import (
-        "bufio"
         "errors"
         "flag"
         "fmt"
+        "io/ioutil"
         "os"
         "os/exec"
         "os/signal"
@@ -20,30 +20,22 @@ var (
         procfile = "Procfile"
 )
 
-// type Command struct {
-//         cmd  *exec.Cmd
-//         name string
-// }
-
 func loadProcs(procfile string) (map[string]string, error) {
-        file, err := os.Open(procfile)
+        procs := make(map[string]string)
+        text, err := ioutil.ReadFile(procfile)
         if err != nil {
                 return nil, err
         }
-        defer file.Close()
+        lines := strings.Split(string(text), "\n")
 
-        procs := make(map[string]string)
-        s := bufio.NewScanner(file)
-        ln := 0
-        for s.Scan() {
-                ln++
-                l := strings.TrimSpace(s.Text())
+        for ln, l := range lines {
                 if l == "" || l[0] == '#' {
                         continue
                 }
                 p := strings.SplitN(l, ":", 2)
                 if len(p) != 2 || !procpat.Match([]byte(p[0])) {
-                        msg := fmt.Sprintf("parsing error at %s#%d:\n\t%s", procfile, ln, l)
+                        msg := fmt.Sprintf("parsing error at %s#%d:\n\t%s",
+                                procfile, ln+1, l)
                         return nil, errors.New(msg)
                 }
                 procs[p[0]] = strings.TrimSpace(p[1])
@@ -134,6 +126,8 @@ func main() {
         }
 }
 
+// subcommand
+// godd start [process]
 func doStart() {
         proc := ""
         if flag.NArg() > 2 {
@@ -163,6 +157,8 @@ func doStart() {
         run(cmds)
 }
 
+// subcommand
+// godd check
 func doCheck() {
         if flag.NArg() > 1 {
                 abort("godd [-p /path/to/procfile] check")
