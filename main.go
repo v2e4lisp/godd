@@ -48,11 +48,9 @@ func run(cmds []*exec.Cmd) {
         // broadcast to kill all commands' processes
         kill := make(chan bool)
         // any command finished
-        done := make(chan bool)
+        done := make(chan bool, len(cmds))
         // handle Ctrl-C and other signal
         sigs := make(chan os.Signal, 1)
-        // ensure all commands get `Started'(although some of them may fail)
-        ready := make(chan error, len(cmds))
 
         signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
@@ -61,15 +59,16 @@ func run(cmds []*exec.Cmd) {
         for _, cmd := range cmds {
                 cmd.Stdout = os.Stdout
                 cmd.Stderr = os.Stderr
+                cmd.Start()
 
                 exit := make(chan error)
-                ready <- cmd.Start()
-
                 go func(cmd *exec.Cmd, exit chan error) {
                         exit <- cmd.Wait()
                 }(cmd, exit)
 
-                // If the command exists, send a message to `done' channel
+                // To prevent killing a terminated command,
+                // send a message to the `done' channel and exit the goroutine
+                // if the command is finished
                 go func(cmd *exec.Cmd, exit chan error) {
                         defer wg.Done()
                         select {
@@ -88,8 +87,6 @@ func run(cmds []*exec.Cmd) {
                 }(cmd, exit)
         }
 
-        // make sure that all commands got executed
-        <-ready
         select {
         case <-done:
                 close(kill)
