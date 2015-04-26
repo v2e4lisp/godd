@@ -1,6 +1,7 @@
 package main
 
 import (
+        "bufio"
         "errors"
         "flag"
         "fmt"
@@ -13,12 +14,69 @@ import (
         "strings"
         "sync"
         "syscall"
+        "time"
 )
 
 var (
         procpat  = regexp.MustCompile("^[a-zA-z0-9_]+$")
+        timefmt  = "2006-01-02 15:04:05"
         procfile = "Procfile"
 )
+
+type Command struct {
+        name string
+        c    *exec.Cmd
+}
+
+func (c *Command) puts(msg ...interface{}) {
+        t := time.Now().Local().Format(timefmt)
+        s := append([]interface{}{"[" + t + "|" + c.name + "]"}, msg...)
+        fmt.Println(s...)
+}
+
+type CommandLogger struct {
+        cmd    *Command
+        bufout *bufio.Reader
+        buferr *bufio.Reader
+}
+
+func NewCommandLogger(c *Command) (l *CommandLogger, err error) {
+        stdout, err := c.c.StdoutPipe()
+        if err != nil {
+                return nil, err
+        }
+        stderr, err := c.c.StderrPipe()
+        if err != nil {
+                return nil, err
+        }
+
+        bufout, buferr := bufio.NewReader(stdout), bufio.NewReader(stderr)
+        return &CommandLogger{c, bufout, buferr}, nil
+}
+
+func (l *CommandLogger) start() {
+        go func() {
+                for {
+                        line, err := l.bufout.ReadBytes('\n')
+                        if err != nil {
+                                // l.cmd.puts(err)
+                                break
+                        }
+                        l.cmd.puts(strings.TrimSpace(string(line)))
+                }
+        }()
+
+        go func() {
+                for {
+                        line, err := l.buferr.ReadBytes('\n')
+                        if err != nil {
+                                // l.cmd.puts(err)
+                                break
+                        }
+                        l.cmd.puts(strings.TrimSpace(string(line)))
+                }
+        }()
+}
 
 func loadProcs(procfile string) (map[string]string, error) {
         procs := make(map[string]string)
@@ -44,7 +102,7 @@ func loadProcs(procfile string) (map[string]string, error) {
         return procs, nil
 }
 
-func run(cmds []*exec.Cmd) {
+func run(cmds []*Command) {
         // broadcast to kill all commands' processes
         kill := make(chan bool)
         // any command finished
@@ -56,33 +114,48 @@ func run(cmds []*exec.Cmd) {
 
         var wg sync.WaitGroup
         wg.Add(len(cmds))
-        for _, cmd := range cmds {
-                cmd.Stdout = os.Stdout
-                cmd.Stderr = os.Stderr
-                cmd.Start()
+        for i, cmd := range cmds {
+                l, err := NewCommandLogger(cmd)
+                if err != nil {
+                        fmt.Println(cmd.name, "unable to initialize logger", err)
+                }
+                l.start()
+
+                // If you get this error, chances are the `sh' is not found
+                if err := cmd.c.Start(); err != nil {
+                        fmt.Println(err)
+                        wg.Add(i - len(cmds))
+                        done <- true
+                        break
+                }
+                cmd.puts("STARTED")
 
                 exit := make(chan error)
-                go func(cmd *exec.Cmd, exit chan error) {
-                        exit <- cmd.Wait()
+                go func(cmd *Command, exit chan error) {
+                        exit <- cmd.c.Wait()
                 }(cmd, exit)
 
                 // To prevent killing a terminated command,
                 // send a message to the `done' channel and exit the goroutine
                 // if the command is finished
-                go func(cmd *exec.Cmd, exit chan error) {
+                go func(cmd *Command, exit chan error) {
                         defer wg.Done()
                         select {
                         case <-kill:
                                 // for commands that failed to Start
-                                if cmd.Process == nil {
+                                if cmd.c.Process == nil {
                                         break
                                 }
-                                err := cmd.Process.Signal(syscall.SIGTERM)
+                                err := cmd.c.Process.Signal(syscall.SIGTERM)
                                 if err != nil {
-                                        fmt.Println(err)
+                                        cmd.puts(err)
                                 }
-                        case <-exit:
+                                cmd.puts("KILLED")
+                        case code := <-exit:
+                                // `done' is a buffered channel
+                                // sending msg to `done' do not block
                                 done <- true
+                                cmd.puts("EXITED", code)
                         }
                 }(cmd, exit)
         }
@@ -127,8 +200,6 @@ func main() {
         }
 }
 
-// subcommand
-// godd start [process]
 func doStart() {
         proc := ""
         if flag.NArg() > 2 {
@@ -143,10 +214,11 @@ func doStart() {
                 abort("Procfile", err)
         }
 
-        cmds := []*exec.Cmd(nil)
-        for name, cmd := range procs {
+        cmds := []*Command(nil)
+        for name, c := range procs {
                 if proc == "" || proc == name {
-                        cmds = append(cmds, exec.Command("sh", "-c", cmd))
+                        cmd := &Command{name, exec.Command("sh", "-c", c)}
+                        cmds = append(cmds, cmd)
                 }
         }
 
@@ -157,8 +229,6 @@ func doStart() {
         run(cmds)
 }
 
-// subcommand
-// godd check
 func doCheck() {
         if flag.NArg() > 1 {
                 abort("godd [-p /path/to/procfile] check")
