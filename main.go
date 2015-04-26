@@ -17,6 +17,8 @@ import (
         "time"
 )
 
+const VERSION = "0.1.0"
+
 var (
         procpat  = regexp.MustCompile("^[a-zA-z0-9_]+$")
         timefmt  = "2006-01-02 15:04:05"
@@ -24,58 +26,50 @@ var (
 )
 
 type Command struct {
-        name string
-        c    *exec.Cmd
+        name   string
+        c      *exec.Cmd
+        bufout *bufio.Reader
+        buferr *bufio.Reader
 }
 
-func (c *Command) puts(msg ...interface{}) {
+func (c *Command) log(msg ...interface{}) {
         t := time.Now().Local().Format(timefmt)
         s := append([]interface{}{"[" + t + "|" + c.name + "]"}, msg...)
         fmt.Println(s...)
 }
 
-type CommandLogger struct {
-        cmd    *Command
-        bufout *bufio.Reader
-        buferr *bufio.Reader
-}
-
-func NewCommandLogger(c *Command) (l *CommandLogger, err error) {
+func (c *Command) logging() error {
         stdout, err := c.c.StdoutPipe()
         if err != nil {
-                return nil, err
+                return err
         }
         stderr, err := c.c.StderrPipe()
         if err != nil {
-                return nil, err
+                return err
         }
+        c.bufout, c.buferr = bufio.NewReader(stdout), bufio.NewReader(stderr)
 
-        bufout, buferr := bufio.NewReader(stdout), bufio.NewReader(stderr)
-        return &CommandLogger{c, bufout, buferr}, nil
-}
-
-func (l *CommandLogger) start() {
         go func() {
                 for {
-                        line, err := l.bufout.ReadBytes('\n')
+                        line, err := c.bufout.ReadBytes('\n')
                         if err != nil {
-                                // l.cmd.puts(err)
                                 break
                         }
-                        l.cmd.puts(strings.TrimSpace(string(line)))
+                        c.log(strings.TrimSpace(string(line)))
                 }
         }()
 
         go func() {
                 for {
-                        line, err := l.buferr.ReadBytes('\n')
+                        line, err := c.buferr.ReadBytes('\n')
                         if err != nil {
-                                // l.cmd.puts(err)
                                 break
                         }
-                        l.cmd.puts(strings.TrimSpace(string(line)))
+                        c.log(strings.TrimSpace(string(line)))
                 }
         }()
+
+        return nil
 }
 
 func loadProcs(procfile string) (map[string]string, error) {
@@ -115,20 +109,18 @@ func run(cmds []*Command) {
         var wg sync.WaitGroup
         wg.Add(len(cmds))
         for i, cmd := range cmds {
-                l, err := NewCommandLogger(cmd)
-                if err != nil {
-                        fmt.Println(cmd.name, "unable to initialize logger", err)
+                if err := cmd.logging(); err != nil {
+                        cmd.log(cmd.name, "unable to redirect stderr and stdout", err)
                 }
-                l.start()
 
                 // If you get this error, chances are the `sh' is not found
                 if err := cmd.c.Start(); err != nil {
-                        fmt.Println(err)
+                        cmd.log(err)
                         wg.Add(i - len(cmds))
                         done <- true
                         break
                 }
-                cmd.puts("STARTED")
+                cmd.log("STARTED")
 
                 exit := make(chan error)
                 go func(cmd *Command, exit chan error) {
@@ -146,16 +138,21 @@ func run(cmds []*Command) {
                                 if cmd.c.Process == nil {
                                         break
                                 }
-                                err := cmd.c.Process.Signal(syscall.SIGTERM)
-                                if err != nil {
-                                        cmd.puts(err)
+                                cmd.c.Process.Signal(syscall.SIGTERM)
+                                // if SIGTERM cannot kill the process
+                                // send a SIGKILL to it
+                                select {
+                                case <-exit:
+                                        cmd.log("KILLED BY SIGTERM")
+                                case <-time.After(3 * time.Second):
+                                        cmd.c.Process.Kill()
+                                        cmd.log("KILLED BY SIGKILL")
                                 }
-                                cmd.puts("KILLED")
                         case code := <-exit:
                                 // `done' is a buffered channel
                                 // sending msg to `done' do not block
+                                cmd.log("EXITED", code)
                                 done <- true
-                                cmd.puts("EXITED", code)
                         }
                 }(cmd, exit)
         }
@@ -176,13 +173,23 @@ func abort(msg ...interface{}) {
 }
 
 func main() {
-        flag.StringVar(&procfile, "procfile", "Procfile", "specify Procfile")
+        flag.Usage = func() {
+                fmt.Print(`COMMANDS:
+  godd check             # Validate Procfile
+  godd start [PROCESS]   # Start all processes(or a specific PROCESS)
+  godd version           # Show version
+
+OPTIONS:
+`)
+                flag.PrintDefaults()
+        }
+        flag.StringVar(&procfile, "p", "Procfile", "specify Procfile")
         flag.Parse()
 
         var err error
         procfile, err = filepath.Abs(procfile)
         if err != nil {
-                abort("Procfile", procfile, err.Error())
+                abort("Procfile error:", err.Error())
         }
 
         if flag.NArg() < 1 {
@@ -195,15 +202,18 @@ func main() {
                 doStart()
         case "check":
                 doCheck()
+        case "version":
+                fmt.Println("godd", VERSION)
         default:
-                abort("command not found:", flag.Arg(0))
+                abort("command not found:\n", flag.Arg(0))
         }
 }
 
 func doStart() {
         proc := ""
         if flag.NArg() > 2 {
-                abort("godd [-p /path/to/procfile] start [proc]")
+                flag.Usage()
+                os.Exit(1)
         }
         if flag.NArg() == 2 {
                 proc = flag.Arg(1)
@@ -211,19 +221,22 @@ func doStart() {
 
         procs, err := loadProcs(procfile)
         if err != nil {
-                abort("Procfile", err)
+                abort("Procfile error:\n", err)
         }
 
         cmds := []*Command(nil)
         for name, c := range procs {
                 if proc == "" || proc == name {
-                        cmd := &Command{name, exec.Command("sh", "-c", c)}
+                        cmd := &Command{
+                                name: name,
+                                c:    exec.Command("sh", "-c", c),
+                        }
                         cmds = append(cmds, cmd)
                 }
         }
 
         if len(procs) > 0 && len(cmds) == 0 && proc != "" {
-                abort("proc not found:", proc)
+                abort("proc not found:\n", proc)
         }
 
         run(cmds)
@@ -231,12 +244,13 @@ func doStart() {
 
 func doCheck() {
         if flag.NArg() > 1 {
-                abort("godd [-p /path/to/procfile] check")
+                flag.Usage()
+                os.Exit(1)
         }
 
         _, err := loadProcs(procfile)
         if err != nil {
-                abort("Procfile", err)
+                abort("Procfile error:\n", err)
         }
         fmt.Println("OK")
 }
