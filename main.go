@@ -20,9 +20,13 @@ import (
 const VERSION = "0.1.0"
 
 var (
-        procpat  = regexp.MustCompile("^[a-zA-z0-9_]+$")
-        timefmt  = "2006-01-02 15:04:05"
-        procfile = "Procfile"
+        procpat = regexp.MustCompile("^[a-zA-z0-9_]+$")
+        timefmt = "15:04:05"
+        cfmt    = "%s"
+
+        // command options
+        procfile string
+        wd       string
 )
 
 type Command struct {
@@ -30,13 +34,14 @@ type Command struct {
         c    *exec.Cmd
 }
 
-func (c *Command) log(msg ...interface{}) {
+func log(c *Command, msg ...interface{}) {
         t := time.Now().Local().Format(timefmt)
-        s := append([]interface{}{"[" + t + "|" + c.name + "]"}, msg...)
+        name := fmt.Sprintf(cfmt, c.name)
+        s := append([]interface{}{t, name, "|"}, msg...)
         fmt.Println(s...)
 }
 
-func (c *Command) logging() error {
+func logging(c *Command) error {
         stdout, err := c.c.StdoutPipe()
         if err != nil {
                 return err
@@ -46,27 +51,18 @@ func (c *Command) logging() error {
                 return err
         }
         bufout, buferr := bufio.NewReader(stdout), bufio.NewReader(stderr)
-
-        go func() {
+        p := func(b *bufio.Reader) {
                 for {
-                        line, err := bufout.ReadBytes('\n')
+                        line, err := b.ReadBytes('\n')
                         if err != nil {
                                 break
                         }
-                        c.log(strings.TrimSpace(string(line)))
+                        log(c, strings.TrimSpace(string(line)))
                 }
-        }()
+        }
 
-        go func() {
-                for {
-                        line, err := buferr.ReadBytes('\n')
-                        if err != nil {
-                                break
-                        }
-                        c.log(strings.TrimSpace(string(line)))
-                }
-        }()
-
+        go p(bufout)
+        go p(buferr)
         return nil
 }
 
@@ -107,18 +103,18 @@ func run(cmds []*Command) {
         var wg sync.WaitGroup
         wg.Add(len(cmds))
         for i, cmd := range cmds {
-                if err := cmd.logging(); err != nil {
-                        cmd.log(cmd.name, "unable to redirect stderr and stdout", err)
+                if err := logging(cmd); err != nil {
+                        log(cmd, "unable to redirect stderr and stdout", err)
                 }
 
                 // If you get this error, chances are the `sh' is not found
                 if err := cmd.c.Start(); err != nil {
-                        cmd.log(err)
+                        log(cmd, err)
                         wg.Add(i - len(cmds))
                         done <- true
                         break
                 }
-                cmd.log("STARTED")
+                log(cmd, "STARTED", "PID:", cmd.c.Process.Pid)
 
                 exit := make(chan error)
                 go func(cmd *Command, exit chan error) {
@@ -140,18 +136,18 @@ func run(cmds []*Command) {
                                 // send it a SIGKILL
                                 select {
                                 case <-exit:
-                                        cmd.log("KILLED BY SIGTERM")
+                                        log(cmd, "KILLED BY SIGTERM")
                                 case <-time.After(3 * time.Second):
                                         cmd.c.Process.Kill()
-                                        cmd.log("KILLED BY SIGKILL")
+                                        log(cmd, "KILLED BY SIGKILL")
                                 }
                         case code := <-exit:
                                 // `done' is a buffered channel
                                 // sending msg to `done' does not block
                                 if code == nil {
-                                        cmd.log("EXITED: exit status 0")
+                                        log(cmd, "EXITED: exit status 0")
                                 } else {
-                                        cmd.log("EXITED", code)
+                                        log(cmd, "EXITED", code)
                                 }
                                 done <- true
                         }
@@ -185,10 +181,15 @@ OPTIONS:
                 flag.PrintDefaults()
         }
         flag.StringVar(&procfile, "p", "Procfile", "specify Procfile")
+        flag.StringVar(&wd, "d", ".", "specify working dir")
         flag.Parse()
 
         var err error
         procfile, err = filepath.Abs(procfile)
+        if err != nil {
+                abort("Procfile error:", err.Error())
+        }
+        wd, err = filepath.Abs(wd)
         if err != nil {
                 abort("Procfile error:", err.Error())
         }
@@ -226,11 +227,18 @@ func doStart() {
         }
 
         cmds := []*Command(nil)
+        maxlen := 0
         for name, c := range procs {
                 if proc == "" || proc == name {
+                        if len(name) > maxlen {
+                                maxlen = len(name)
+                        }
+
+                        c := exec.Command("sh", "-c", c)
+                        c.Dir = wd
                         cmd := &Command{
                                 name: name,
-                                c:    exec.Command("sh", "-c", c),
+                                c:    c,
                         }
                         cmds = append(cmds, cmd)
                 }
@@ -240,6 +248,7 @@ func doStart() {
                 abort("Proc not found:", proc)
         }
 
+        cfmt = "%-" + fmt.Sprintf("%d", maxlen) + "s"
         run(cmds)
 }
 
