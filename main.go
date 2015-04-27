@@ -26,10 +26,8 @@ var (
 )
 
 type Command struct {
-        name   string
-        c      *exec.Cmd
-        bufout *bufio.Reader
-        buferr *bufio.Reader
+        name string
+        c    *exec.Cmd
 }
 
 func (c *Command) log(msg ...interface{}) {
@@ -47,11 +45,11 @@ func (c *Command) logging() error {
         if err != nil {
                 return err
         }
-        c.bufout, c.buferr = bufio.NewReader(stdout), bufio.NewReader(stderr)
+        bufout, buferr := bufio.NewReader(stdout), bufio.NewReader(stderr)
 
         go func() {
                 for {
-                        line, err := c.bufout.ReadBytes('\n')
+                        line, err := bufout.ReadBytes('\n')
                         if err != nil {
                                 break
                         }
@@ -61,7 +59,7 @@ func (c *Command) logging() error {
 
         go func() {
                 for {
-                        line, err := c.buferr.ReadBytes('\n')
+                        line, err := buferr.ReadBytes('\n')
                         if err != nil {
                                 break
                         }
@@ -101,7 +99,7 @@ func run(cmds []*Command) {
         kill := make(chan bool)
         // any command finished
         done := make(chan bool, len(cmds))
-        // handle Ctrl-C and other signal
+        // handle Ctrl-C and other signals
         sigs := make(chan os.Signal, 1)
 
         signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
@@ -129,7 +127,6 @@ func run(cmds []*Command) {
 
                 // To prevent killing a terminated command,
                 // send a message to the `done' channel and exit the goroutine
-                // if the command is finished
                 go func(cmd *Command, exit chan error) {
                         defer wg.Done()
                         select {
@@ -140,7 +137,7 @@ func run(cmds []*Command) {
                                 }
                                 cmd.c.Process.Signal(syscall.SIGTERM)
                                 // if SIGTERM cannot kill the process
-                                // send a SIGKILL to it
+                                // send it a SIGKILL
                                 select {
                                 case <-exit:
                                         cmd.log("KILLED BY SIGTERM")
@@ -150,7 +147,7 @@ func run(cmds []*Command) {
                                 }
                         case code := <-exit:
                                 // `done' is a buffered channel
-                                // sending msg to `done' do not block
+                                // sending msg to `done' does not block
                                 cmd.log("EXITED", code)
                                 done <- true
                         }
@@ -205,7 +202,7 @@ OPTIONS:
         case "version":
                 fmt.Println("godd", VERSION)
         default:
-                abort("command not found:\n", flag.Arg(0))
+                abort("Command not found:", flag.Arg(0))
         }
 }
 
@@ -221,7 +218,7 @@ func doStart() {
 
         procs, err := loadProcs(procfile)
         if err != nil {
-                abort("Procfile error:\n", err)
+                abort("Procfile error:", err)
         }
 
         cmds := []*Command(nil)
@@ -236,7 +233,7 @@ func doStart() {
         }
 
         if len(procs) > 0 && len(cmds) == 0 && proc != "" {
-                abort("proc not found:\n", proc)
+                abort("Proc not found:", proc)
         }
 
         run(cmds)
@@ -250,7 +247,7 @@ func doCheck() {
 
         _, err := loadProcs(procfile)
         if err != nil {
-                abort("Procfile error:\n", err)
+                abort("Procfile error:", err)
         }
         fmt.Println("OK")
 }
