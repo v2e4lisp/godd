@@ -148,7 +148,11 @@ func run(cmds []*Command) {
                         case code := <-exit:
                                 // `done' is a buffered channel
                                 // sending msg to `done' does not block
-                                cmd.log("EXITED", code)
+                                if code == nil {
+                                        cmd.log("EXITED: exit status 0")
+                                } else {
+                                        cmd.log("EXITED", code)
+                                }
                                 done <- true
                         }
                 }(cmd, exit)
