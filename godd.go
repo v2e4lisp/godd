@@ -131,18 +131,17 @@ func run(cmds []*Command) {
         signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
         var wg sync.WaitGroup
-        wg.Add(len(cmds))
-        for i, cmd := range cmds {
+        for _, cmd := range cmds {
                 if err := logging(cmd); err != nil {
                         log(cmd, "unable to redirect stderr and stdout", err)
                 }
                 // If you get this error, chances are the `sh' is not found
                 if err := cmd.c.Start(); err != nil {
                         log(cmd, err)
-                        wg.Add(i - len(cmds))
                         done <- true
                         break
                 }
+                wg.Add(1)
                 log(cmd, "STARTED", "PID:", cmd.c.Process.Pid)
 
                 exit := make(chan error)
