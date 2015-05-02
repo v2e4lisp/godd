@@ -145,7 +145,6 @@ func run(cmds []*Command) {
                 if err := logging(cmd); err != nil {
                         log(cmd, "unable to redirect stderr and stdout", err)
                 }
-
                 // If you get this error, chances are the `sh' is not found
                 if err := cmd.c.Start(); err != nil {
                         log(cmd, err)
@@ -166,10 +165,6 @@ func run(cmds []*Command) {
                         defer wg.Done()
                         select {
                         case <-kill:
-                                // for commands that failed to Start
-                                if cmd.c.Process == nil {
-                                        break
-                                }
                                 cmd.c.Process.Signal(syscall.SIGTERM)
                                 // if SIGTERM cannot kill the process
                                 // send it a SIGKILL
@@ -186,7 +181,7 @@ func run(cmds []*Command) {
                                 if code == nil {
                                         log(cmd, "EXITED: exit status 0")
                                 } else {
-                                        log(cmd, "EXITED", code)
+                                        log(cmd, "EXITED:", code)
                                 }
                                 done <- true
                         }
