@@ -20,12 +20,14 @@ import (
 const VERSION = "0.1.0"
 
 var (
-        procpat = regexp.MustCompile("^[a-zA-z0-9_]+$")
-        timefmt = "15:04:05"
-        cfmt    = "%s"
+        procNamePat = regexp.MustCompile("^[a-zA-z0-9_]+$")
+        envNamePat  = regexp.MustCompile("^[a-zA-z0-9_]+$")
+        timefmt     = "15:04:05"
+        cfmt        = "%s"
 
         // command options
         procfile string
+        envfile  string
         wd       string
 )
 
@@ -66,6 +68,43 @@ func logging(c *Command) error {
         return nil
 }
 
+func loadEnv(envfile string) ([]string, error) {
+        env := []string(nil)
+        text, err := ioutil.ReadFile(envfile)
+        if err != nil {
+                return nil, err
+        }
+        lines := strings.Split(string(text), "\n")
+
+        for ln, l := range lines {
+                if l == "" || l[0] == '#' {
+                        continue
+                }
+
+                e := strings.SplitN(l, "=", 2)
+                if len(e) != 2 || !envNamePat.Match([]byte(e[0])) {
+                        msg := fmt.Sprintf("parsing error at %s#%d:\n\t%s",
+                                envfile, ln+1, l)
+                        return nil, errors.New(msg)
+                }
+
+                key := e[0]
+                val := strings.TrimSpace(e[1])
+                last := len(val) - 1
+                if val[0] == '"' && val[last] == '"' {
+                        val = val[1:last]
+                } else if val[0] == '\'' && val[last] == '\'' {
+                        val = val[1:last]
+                        val = strings.Replace(val, "\\\"", "\"", -1)
+                        val = strings.Replace(val, "\\n", "\n", -1)
+                }
+
+                env = append(env, key+"="+val)
+        }
+
+        return env, nil
+}
+
 func loadProcs(procfile string) (map[string]string, error) {
         procs := make(map[string]string)
         text, err := ioutil.ReadFile(procfile)
@@ -79,7 +118,7 @@ func loadProcs(procfile string) (map[string]string, error) {
                         continue
                 }
                 p := strings.SplitN(l, ":", 2)
-                if len(p) != 2 || !procpat.Match([]byte(p[0])) {
+                if len(p) != 2 || !procNamePat.Match([]byte(p[0])) {
                         msg := fmt.Sprintf("parsing error at %s#%d:\n\t%s",
                                 procfile, ln+1, l)
                         return nil, errors.New(msg)
@@ -181,6 +220,7 @@ OPTIONS:
                 flag.PrintDefaults()
         }
         flag.StringVar(&procfile, "p", "Procfile", "specify Procfile")
+        flag.StringVar(&envfile, "e", ".env", "specify dot env file")
         flag.StringVar(&wd, "d", ".", "specify working dir")
         flag.Parse()
 
@@ -188,6 +228,10 @@ OPTIONS:
         procfile, err = filepath.Abs(procfile)
         if err != nil {
                 abort("Procfile error:", err.Error())
+        }
+        envfile, err = filepath.Abs(envfile)
+        if err != nil {
+                abort("Env file error:", err.Error())
         }
         wd, err = filepath.Abs(wd)
         if err != nil {
@@ -225,6 +269,10 @@ func doStart() {
         if err != nil {
                 abort("Procfile error:", err)
         }
+        env, err := loadEnv(envfile)
+        if err != nil {
+                abort("Env file error:", err)
+        }
 
         cmds := []*Command(nil)
         maxlen := 0
@@ -236,6 +284,7 @@ func doStart() {
 
                         c := exec.Command("sh", "-c", c)
                         c.Dir = wd
+                        c.Env = env
                         cmd := &Command{
                                 name: name,
                                 c:    c,
