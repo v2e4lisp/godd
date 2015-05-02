@@ -91,9 +91,9 @@ func loadEnv(envfile string) ([]string, error) {
                 key := e[0]
                 val := strings.TrimSpace(e[1])
                 last := len(val) - 1
-                if val[0] == '"' && val[last] == '"' {
+                if val[0] == '\'' && val[last] == '\'' {
                         val = val[1:last]
-                } else if val[0] == '\'' && val[last] == '\'' {
+                } else if val[0] == '"' && val[last] == '"' {
                         val = val[1:last]
                         val = strings.Replace(val, "\\\"", "\"", -1)
                         val = strings.Replace(val, "\\n", "\n", -1)
