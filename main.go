@@ -213,6 +213,7 @@ func main() {
                 fmt.Print(`COMMANDS:
   godd check             # Validate Procfile
   godd start [PROCESS]   # Start all processes(or a specific PROCESS)
+  godd run [COMMAND]     # Load the dot env file and run any command.
   godd version           # Show version
 
 OPTIONS:
@@ -248,6 +249,8 @@ OPTIONS:
                 doStart()
         case "check":
                 doCheck()
+        case "run":
+                doRun()
         case "version":
                 fmt.Println("godd", VERSION)
         default:
@@ -276,13 +279,13 @@ func doStart() {
 
         cmds := []*Command(nil)
         maxlen := 0
-        for name, c := range procs {
+        for name, p := range procs {
                 if proc == "" || proc == name {
                         if len(name) > maxlen {
                                 maxlen = len(name)
                         }
 
-                        c := exec.Command("sh", "-c", c)
+                        c := exec.Command("sh", "-c", p)
                         c.Dir = wd
                         c.Env = env
                         cmd := &Command{
@@ -312,4 +315,23 @@ func doCheck() {
                 abort("Procfile error:", err)
         }
         fmt.Println("OK")
+}
+
+func doRun() {
+        if flag.NArg() != 2 {
+                flag.Usage()
+                os.Exit(1)
+        }
+
+        env, err := loadEnv(envfile)
+        if err != nil {
+                abort("Env file error:", err)
+        }
+        cmd := flag.Arg(1)
+        c := exec.Command("sh", "-c", cmd)
+        c.Stdout = os.Stdout
+        c.Stderr = os.Stderr
+        c.Dir = wd
+        c.Env = env
+        c.Run()
 }
