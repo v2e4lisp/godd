@@ -30,7 +30,7 @@ func newcmd(cmd string, env []string) *exec.Cmd {
 }
 
 func getenv() []string {
-        env, err := loadEnv(envfile)
+        env, err := LoadEnv(envfile)
         if err != nil {
                 fmt.Println("Unable to load dotenv file. ",
                         "Using the current environment.")
@@ -99,7 +99,7 @@ func doStart() {
                 proc = flag.Arg(1)
         }
 
-        procs, err := loadProcs(procfile)
+        procs, err := LoadProcs(procfile)
         if err != nil {
                 abort("Procfile error:", err)
         }
@@ -109,28 +109,17 @@ func doStart() {
 
         env := getenv()
         cmds := []*Command(nil)
-        maxlen := 0
         for name, p := range procs {
                 if proc != "" && proc != name {
                         continue
                 }
-
-                if len(name) > maxlen {
-                        maxlen = len(name)
-                }
-                cmd := &Command{
-                        name: name,
-                        c:    newcmd(p, env),
-                }
+                cmd := &Command{name, newcmd(p, env)}
                 cmds = append(cmds, cmd)
         }
-
         if len(cmds) == 0 && proc != "" {
                 abort("Proc not found:", proc)
         }
-
-        logPrefixFmt = "%-" + fmt.Sprintf("%d", maxlen) + "s"
-        run(cmds)
+        Run(cmds)
 }
 
 func doCheck() {
@@ -139,7 +128,7 @@ func doCheck() {
                 os.Exit(1)
         }
 
-        _, err := loadProcs(procfile)
+        _, err := LoadProcs(procfile)
         if err != nil {
                 abort("Procfile error:", err)
         }

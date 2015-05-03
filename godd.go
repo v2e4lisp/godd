@@ -27,14 +27,14 @@ type Command struct {
         c    *exec.Cmd
 }
 
-func log(c *Command, msg ...interface{}) {
+func (c *Command) log(msg ...interface{}) {
         t := time.Now().Local().Format(timeFmt)
         name := fmt.Sprintf(logPrefixFmt, c.name)
         s := append([]interface{}{t, name, "|"}, msg...)
         fmt.Println(s...)
 }
 
-func logging(c *Command) error {
+func (c *Command) logging() error {
         stdout, err := c.c.StdoutPipe()
         if err != nil {
                 return err
@@ -44,22 +44,32 @@ func logging(c *Command) error {
                 return err
         }
         bufout, buferr := bufio.NewReader(stdout), bufio.NewReader(stderr)
-        p := func(b *bufio.Reader) {
+        pipe := func(b *bufio.Reader) {
                 for {
                         line, err := b.ReadBytes('\n')
                         if err != nil {
                                 break
                         }
-                        log(c, strings.TrimSpace(string(line)))
+                        c.log(strings.TrimSpace(string(line)))
                 }
         }
 
-        go p(bufout)
-        go p(buferr)
+        go pipe(bufout)
+        go pipe(buferr)
         return nil
 }
 
-func loadEnv(envfile string) ([]string, error) {
+func commandLogInit(cmds []*Command) {
+        maxlen := 0
+        for _, cmd := range cmds {
+                if len(cmd.name) > maxlen {
+                        maxlen = len(cmd.name)
+                }
+        }
+        logPrefixFmt = "%-" + fmt.Sprintf("%d", maxlen) + "s"
+}
+
+func LoadEnv(envfile string) ([]string, error) {
         env := []string(nil)
         text, err := ioutil.ReadFile(envfile)
         if err != nil {
@@ -96,7 +106,7 @@ func loadEnv(envfile string) ([]string, error) {
         return env, nil
 }
 
-func loadProcs(procfile string) (map[string]string, error) {
+func LoadProcs(procfile string) (map[string]string, error) {
         procs := make(map[string]string)
         text, err := ioutil.ReadFile(procfile)
         if err != nil {
@@ -120,7 +130,12 @@ func loadProcs(procfile string) (map[string]string, error) {
         return procs, nil
 }
 
-func run(cmds []*Command) {
+func Run(cmds []*Command) {
+        if len(cmds) == 0 {
+                return
+        }
+        commandLogInit(cmds)
+
         // broadcast to kill all commands' processes
         kill := make(chan bool)
         // any command finished
@@ -132,17 +147,17 @@ func run(cmds []*Command) {
 
         var wg sync.WaitGroup
         for _, cmd := range cmds {
-                if err := logging(cmd); err != nil {
-                        log(cmd, "unable to redirect stderr and stdout", err)
+                if err := cmd.logging(); err != nil {
+                        cmd.log("unable to redirect stderr and stdout", err)
                 }
                 // If you get this error, chances are the `sh' is not found
                 if err := cmd.c.Start(); err != nil {
-                        log(cmd, err)
+                        cmd.log(err)
                         done <- true
                         break
                 }
                 wg.Add(1)
-                log(cmd, "STARTED", "PID:", cmd.c.Process.Pid)
+                cmd.log("STARTED", "PID:", cmd.c.Process.Pid)
 
                 exit := make(chan error)
                 go func(cmd *Command, exit chan error) {
@@ -160,18 +175,18 @@ func run(cmds []*Command) {
                                 // send it a SIGKILL
                                 select {
                                 case <-exit:
-                                        log(cmd, "KILLED BY SIGTERM")
+                                        cmd.log("KILLED BY SIGTERM")
                                 case <-time.After(3 * time.Second):
                                         cmd.c.Process.Kill()
-                                        log(cmd, "KILLED BY SIGKILL")
+                                        cmd.log("KILLED BY SIGKILL")
                                 }
                         case code := <-exit:
                                 // `done' is a buffered channel
                                 // sending msg to `done' does not block
                                 if code == nil {
-                                        log(cmd, "EXITED: exit status 0")
+                                        cmd.log("EXITED: exit status 0")
                                 } else {
-                                        log(cmd, "EXITED:", code)
+                                        cmd.log("EXITED:", code)
                                 }
                                 done <- true
                         }
