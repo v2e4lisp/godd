@@ -6,6 +6,8 @@ import (
         "os"
         "os/exec"
         "path/filepath"
+
+        "github.com/v2e4lisp/subcmd"
 )
 
 const VERSION = "0.1.0"
@@ -70,12 +72,7 @@ OPTIONS:
                 abort("Working dir error:", err.Error())
         }
 
-        if flag.NArg() < 1 {
-                flag.Usage()
-                os.Exit(1)
-        }
-
-        switch flag.Arg(0) {
+        switch subcmd.Name() {
         case "start":
                 doStart()
         case "check":
@@ -84,19 +81,22 @@ OPTIONS:
                 doRun()
         case "version":
                 fmt.Println("godd", VERSION)
+        case "":
+                flag.Usage()
+                os.Exit(1)
         default:
-                abort("Command not found:", flag.Arg(0))
+                abort("Command not found:", subcmd.Name())
         }
 }
 
 func doStart() {
         proc := ""
-        if flag.NArg() > 2 {
+        if flag.NArg() > 1 {
                 flag.Usage()
                 os.Exit(1)
         }
-        if flag.NArg() == 2 {
-                proc = flag.Arg(1)
+        if flag.NArg() == 1 {
+                proc = flag.Arg(0)
         }
 
         procs, err := LoadProcs(procfile)
@@ -123,7 +123,7 @@ func doStart() {
 }
 
 func doCheck() {
-        if flag.NArg() > 1 {
+        if flag.NArg() > 0 {
                 flag.Usage()
                 os.Exit(1)
         }
@@ -136,13 +136,13 @@ func doCheck() {
 }
 
 func doRun() {
-        if flag.NArg() != 2 {
+        if flag.NArg() != 1 {
                 flag.Usage()
                 os.Exit(1)
         }
 
         env := getenv()
-        c := newcmd(flag.Arg(1), env)
+        c := newcmd(flag.Arg(0), env)
         c.Stdout = os.Stdout
         c.Stderr = os.Stderr
         c.Run()
