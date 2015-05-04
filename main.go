@@ -53,7 +53,7 @@ OPTIONS:
 `)
                 flag.PrintDefaults()
         }
-        flag.StringVar(&procfile, "p", "Procfile", "specify Procfile")
+        flag.StringVar(&procfile, "f", "Procfile", "specify Procfile")
         flag.StringVar(&envfile, "e", ".env", "specify dot env file")
         flag.StringVar(&wd, "d", ".", "specify working dir")
         flag.Parse()
