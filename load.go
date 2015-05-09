@@ -4,7 +4,13 @@ import (
         "errors"
         "fmt"
         "io/ioutil"
+        "regexp"
         "strings"
+)
+
+var (
+        procNamePat = regexp.MustCompile("^[a-zA-z0-9_]+$")
+        envNamePat  = regexp.MustCompile("^[a-zA-z0-9_]+$")
 )
 
 func LoadEnv(envfile string) ([]string, error) {

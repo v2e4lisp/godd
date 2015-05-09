@@ -11,8 +11,6 @@ import (
 )
 
 var (
-	procNamePat = regexp.MustCompile("^[a-zA-z0-9_]+$")
-	envNamePat  = regexp.MustCompile("^[a-zA-z0-9_]+$")
 	waitKill    = 3 * time.Second
 )
 
