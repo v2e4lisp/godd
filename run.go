@@ -4,14 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"regexp"
 	"sync"
 	"syscall"
 	"time"
 )
 
 var (
-	waitKill    = 3 * time.Second
+	waitKill = 3 * time.Second
 )
 
 type Command struct {

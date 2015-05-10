@@ -50,7 +50,7 @@ func logging(cmd *Command) error {
 }
 
 func logInit(cmds []*Command) {
-        maxlen := 0
+        maxlen := len(sysLogPrefix)
         for _, cmd := range cmds {
                 if len(cmd.name) > maxlen {
                         maxlen = len(cmd.name)
