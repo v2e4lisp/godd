@@ -43,7 +43,7 @@ func getenv() []string {
 
 func main() {
         flag.Usage = func() {
-                fmt.Print(`COMMANDS:
+                fmt.Fprint(os.Stderr, `COMMANDS:
   godd check             # Validate Procfile
   godd start [PROCESS]   # Start all processes(or a specific PROCESS)
   godd run [COMMAND]     # Load the dot env file and run any command.
