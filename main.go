@@ -113,7 +113,11 @@ func doStart() {
                 if proc != "" && proc != name {
                         continue
                 }
-                cmd := &Command{name, newcmd(p, env)}
+                cmd := &Command{
+                        name: name,
+                        c:    newcmd(p, env),
+                        exit: make(chan struct{}),
+                }
                 cmds = append(cmds, cmd)
         }
         if len(cmds) == 0 && proc != "" {

@@ -19,6 +19,7 @@ var (
 type Command struct {
 	name string
 	c    *exec.Cmd
+	exit chan struct{}
 }
 
 func logging(cmd *Command) error {
@@ -52,7 +53,7 @@ func Run(cmds []*Command) {
 	}
 
 	// broadcast to kill all commands' processes
-	kill := make(chan bool)
+	kill := make(chan struct{})
 	// any command finished
 	done := make(chan bool, len(cmds))
 	// handle Ctrl-C and other signals
@@ -70,33 +71,30 @@ func Run(cmds []*Command) {
 			done <- true
 			break
 		}
-		log.Println(cmd.name, "[STARTED] pid:", cmd.c.Process.Pid)
 
-		exit := make(chan error)
-		go func(cmd *Command, exit chan error) { exit <- cmd.c.Wait() }(cmd, exit)
-		// To prevent killing a terminated command,
-		// send a message to the `done' channel and exit the goroutine
-		go func(cmd *Command, exit chan error) {
+		log.Println(cmd.name, "[STARTED] pid:", cmd.c.Process.Pid)
+		go func(cmd *Command) { cmd.c.Wait(); close(cmd.exit) }(cmd)
+		go func(cmd *Command) {
 			wg.Add(1)
 			defer wg.Done()
 			defer func() { done <- true }()
 			defer func() { log.Println(cmd.name, "[EXITED]", cmd.c.ProcessState) }()
 
 			select {
-			case <-exit:
+			case <-cmd.exit:
 			case <-kill:
 				log.Println("sys", "sending SIGTERM to", cmd.name)
 				cmd.c.Process.Signal(syscall.SIGTERM)
 				// if SIGTERM cannot kill the process,
 				// send it a SIGKILL
 				select {
-				case <-exit:
+				case <-cmd.exit:
 				case <-time.After(waitKill):
 					log.Println("sys", "sending SIGKILL to", cmd.name)
 					cmd.c.Process.Kill()
 				}
 			}
-		}(cmd, exit)
+		}(cmd)
 	}
 
 	select {
