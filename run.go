@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -38,7 +37,7 @@ func logging(cmd *Command) error {
 			if err != nil {
 				break
 			}
-			log.Println(cmd.name, strings.TrimSpace(string(line)))
+			log.Print(cmd.name, ": ", string(line))
 		}
 	}
 
