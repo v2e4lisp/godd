@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"log"
 	"os"
 	"os/exec"
@@ -9,99 +8,102 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/v2e4lisp/cmdplx"
 )
 
-var (
-	waitKill = 3 * time.Second
-)
-
-type Command struct {
-	name string
-	c    *exec.Cmd
-	exit chan struct{}
+type runner struct {
+	cmds     map[*exec.Cmd]string
+	waitKill time.Duration
+	once     sync.Once
+	done     chan struct{}
 }
 
-func logging(cmd *Command) error {
-	stdout, err := cmd.c.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.c.StderrPipe()
-	if err != nil {
-		return err
-	}
-	bufout, buferr := bufio.NewReader(stdout), bufio.NewReader(stderr)
-	pipe := func(b *bufio.Reader) {
-		for {
-			line, err := b.ReadBytes('\n')
-			if err != nil {
-				break
+func (r *runner) killAll() {
+	go r.once.Do(func() {
+		groupId := syscall.Getpgrp()
+		log.Println("godd", "sending SIGTERM to process group", groupId)
+		syscall.Kill(-groupId, syscall.SIGTERM)
+		select {
+		case <-time.After(r.waitKill):
+			for cmd, name := range r.cmds {
+				if cmd.Process == nil || cmd.ProcessState != nil {
+					continue
+				}
+				log.Println("sys", "sending SIGKILL to", name)
+				cmd.Process.Kill()
 			}
-			log.Print(cmd.name, ": ", string(line))
+		case <-r.done:
 		}
-	}
-
-	go pipe(bufout)
-	go pipe(buferr)
-	return nil
+	})
 }
 
-func Run(cmds []*Command) {
-	if len(cmds) == 0 {
-		return
-	}
-
-	// broadcast to kill all commands' processes
-	kill := make(chan struct{})
-	// any command finished
-	done := make(chan bool, len(cmds))
+func (r *runner) handleSigs() {
 	// handle Ctrl-C and other signals
 	sigs := make(chan os.Signal, 1)
-
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	var wg sync.WaitGroup
-	for _, cmd := range cmds {
-		if err := logging(cmd); err != nil {
-			log.Println(cmd.name, "unable to redirect stderr and stdout", err)
-		}
-		// If you get this error, chances are the `sh' is not found
-		if err := cmd.c.Start(); err != nil {
-			log.Println(cmd.name, err)
-			done <- true
-			break
-		}
-
-		log.Println(cmd.name, "[STARTED] pid:", cmd.c.Process.Pid)
-		go func(cmd *Command) { cmd.c.Wait(); close(cmd.exit) }(cmd)
-		go func(cmd *Command) {
-			wg.Add(1)
-			defer wg.Done()
-			defer func() { done <- true }()
-			defer func() { log.Println(cmd.name, "[EXITED]", cmd.c.ProcessState) }()
-
+	go func() {
+		for {
 			select {
-			case <-cmd.exit:
-			case <-kill:
-				log.Println("sys", "sending SIGTERM to", cmd.name)
-				cmd.c.Process.Signal(syscall.SIGTERM)
-				// if SIGTERM cannot kill the process,
-				// send it a SIGKILL
-				select {
-				case <-cmd.exit:
-				case <-time.After(waitKill):
-					log.Println("sys", "sending SIGKILL to", cmd.name)
-					cmd.c.Process.Kill()
-				}
+			case <-sigs:
+				r.killAll()
+			case <-r.done:
+				return
 			}
-		}(cmd)
+		}
+	}()
+}
+
+func (r *runner) run() {
+	r.handleSigs()
+	cs := []*exec.Cmd(nil)
+	for c := range r.cmds {
+		cs = append(cs, c)
+	}
+	plx := cmdplx.New(cs)
+	lines, started, exited := plx.Start()
+
+	for {
+		select {
+		case line := <-lines:
+			if line == nil {
+				lines = nil
+				break
+			}
+			if line.Err() == nil {
+				log.Println(r.cmds[line.Cmd()], line.Text())
+			}
+		case s := <-started:
+			if s == nil {
+				started = nil
+				break
+			}
+			c := s.Cmd()
+			if err := s.Err(); err != nil {
+				log.Println(r.cmds[c], err)
+				r.killAll()
+				break
+			}
+			log.Println(r.cmds[c], "[Started]", "pid:", c.Process.Pid)
+		case s := <-exited:
+			if s == nil {
+				goto DONE
+			}
+			c := s.Cmd()
+			log.Println(r.cmds[c], "[Exited]", c.ProcessState)
+			r.killAll()
+		}
 	}
 
-	select {
-	case <-done:
-		close(kill)
-	case <-sigs:
-		close(kill)
-	}
+DONE:
+	close(r.done)
+}
 
-	wg.Wait()
+func Run(cmds map[*exec.Cmd]string, waitKill time.Duration) {
+	r := &runner{
+		cmds:     cmds,
+		waitKill: waitKill,
+		done:     make(chan struct{}),
+	}
+	r.run()
 }

@@ -6,6 +6,7 @@ import (
         "os"
         "os/exec"
         "path/filepath"
+        "time"
 
         "github.com/v2e4lisp/subcmd"
 )
@@ -108,22 +109,18 @@ func doStart() {
         }
 
         env := getenv()
-        cmds := []*Command(nil)
+        cmds := make(map[*exec.Cmd]string)
         for name, p := range procs {
                 if proc != "" && proc != name {
                         continue
                 }
-                cmd := &Command{
-                        name: name,
-                        c:    newcmd(p, env),
-                        exit: make(chan struct{}),
-                }
-                cmds = append(cmds, cmd)
+                c := newcmd(p, env)
+                cmds[c] = name
         }
         if len(cmds) == 0 && proc != "" {
                 abort("Proc not found:", proc)
         }
-        Run(cmds)
+        Run(cmds, 3*time.Second)
 }
 
 func doCheck() {
